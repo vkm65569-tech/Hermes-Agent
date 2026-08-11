@@ -114,7 +114,6 @@ jobs:
                     --exclude 'hermes-agent' --exclude 'hermes-agent/' \
                     --exclude 'bin' --exclude 'bin/' \
                     --exclude 'venvs' --exclude 'venvs/' \
-                    --exclude '.env' --exclude '.env.example' \
                     --exclude 'auth' --exclude 'auth/' \
                     --exclude 'auth.json' --exclude 'auth.lock' \
                     --exclude 'logs' --exclude 'logs/' \
@@ -181,7 +180,15 @@ jobs:
           [ ! -f .guard-skip ] || exit 0
           mkdir -p "$HOME/.hermes"
           env_file="$HOME/.hermes/.env"
-          : > "$env_file"
+
+          # MERGE strategy: preserve runtime-added keys (e.g., added via Telegram)
+          # while GitHub Secrets always take priority for matching keys.
+          # 1. Load existing .env (from R2 restore) into temp
+          # 2. Overwrite/add GitHub Secrets
+          # 3. Result: runtime keys preserved + secrets updated
+          touch "$env_file"
+          cp "$env_file" /tmp/.env.existing 2>/dev/null || touch /tmp/.env.existing
+
           for var in \
             OPENCODE_ZEN_API_KEY OPENROUTER_API_KEY ANTHROPIC_API_KEY GOOGLE_API_KEY GEMINI_API_KEY \
             NOUS_API_KEY FIREWORKS_API_KEY KIMI_API_KEY HF_TOKEN DEEPINFRA_API_KEY \
@@ -190,11 +197,17 @@ jobs:
             TELEGRAM_CRON_THREAD_ID SLACK_BOT_TOKEN SLACK_APP_TOKEN SLACK_ALLOWED_USERS; do
             val="${!var}"
             if [ -n "$val" ]; then
-              printf '%s=%s\n' "$var" "$val" >> "$env_file"
+              # Remove existing line for this key (if any) and add the secret value
+              sed -i "/^${var}=/d" /tmp/.env.existing
+              printf '%s=%s\n' "$var" "$val" >> /tmp/.env.existing
             fi
           done
+
+          # Write merged result
+          mv /tmp/.env.existing "$env_file"
           chmod 600 "$env_file"
-          echo ".env written with $(wc -l < "$env_file") keys"
+          existing_count=$(wc -l < "$env_file")
+          echo ".env merged — ${existing_count} total keys (GitHub Secrets override, runtime keys preserved)"
 
       - name: Apply config overrides
         run: |

@@ -43,8 +43,6 @@ rsync -a --delete \
   --exclude 'bin/' \
   --exclude 'venvs' \
   --exclude 'venvs/' \
-  --exclude '.env' \
-  --exclude '.env.example' \
   --exclude 'auth' \
   --exclude 'auth/' \
   --exclude 'auth.json' \

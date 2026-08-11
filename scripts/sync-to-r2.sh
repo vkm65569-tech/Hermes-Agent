@@ -51,8 +51,6 @@ while [ ! -f "${STOP_FLAG}" ]; do
     --exclude 'bin/' \
     --exclude 'venvs' \
     --exclude 'venvs/' \
-    --exclude '.env' \
-    --exclude '.env.example' \
     --exclude 'auth' \
     --exclude 'auth/' \
     --exclude 'auth.json' \
@@ -139,7 +137,6 @@ if mountpoint -q "${MOUNT_POINT}" 2>/dev/null; then
     --exclude 'hermes-agent' --exclude 'hermes-agent/' \
     --exclude 'bin' --exclude 'bin/' \
     --exclude 'venvs' --exclude 'venvs/' \
-    --exclude '.env' --exclude '.env.example' \
     --exclude 'auth' --exclude 'auth/' \
     --exclude 'auth.json' --exclude 'auth.lock' \
     --exclude 'logs' --exclude 'logs/' \
