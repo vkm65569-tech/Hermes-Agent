@@ -39,13 +39,35 @@ jobs:
       - name: Checkout
         uses: actions/checkout@v4
 
-      - name: Restore Hermes state (from latest encrypted release)
+      # ── R2 PERSISTENT STORAGE ─────────────────────────────────────────
+      - name: Mount R2 persistent storage
+        env:
+          R2_ACCOUNT_ID: ${{ secrets.R2_ACCOUNT_ID }}
+          R2_ACCESS_KEY_ID: ${{ secrets.R2_ACCESS_KEY_ID }}
+          R2_SECRET_ACCESS_KEY: ${{ secrets.R2_SECRET_ACCESS_KEY }}
+          R2_BUCKET_NAME: ${{ secrets.R2_BUCKET_NAME }}
+        run: |
+          [ ! -f .guard-skip ] || exit 0
+          bash scripts/mount-r2.sh
+
+      # ── RESTORE STATE (R2 first, then releases as fallback) ───────────
+      - name: Restore Hermes state
         env:
           GH_TOKEN: ${{ secrets.GH_PAT || github.token }}
           STATE_ENCRYPTION_KEY: ${{ secrets.STATE_ENCRYPTION_KEY }}
         run: |
           [ ! -f .guard-skip ] || exit 0
-          mkdir -p "$HOME/.hermes" /tmp/restore
+
+          # If R2 already restored data, skip release restore
+          if [ -f "$HOME/.hermes/.r2-restored" ]; then
+            echo "State already restored from R2 — skipping release restore"
+            rm -f "$HOME/.hermes/.r2-restored"
+            exit 0
+          fi
+
+          # R2 was empty or not mounted — try restoring from releases
+          echo "R2 has no data — attempting restore from encrypted releases..."
+          mkdir -p "$HOME/.hermes" "$HOME/workspace" /tmp/restore
           restored=0
           tags=$(gh release list --repo "${{ github.repository }}" --limit 5 --json tagName --jq '.[].tagName' 2>/dev/null || true)
           for tag in $tags; do
@@ -71,14 +93,50 @@ jobs:
             fi
             if [ "$ok" = "1" ]; then
               if tar -xzf /tmp/restore/state.tar.gz -C . 2>/dev/null; then
-                rsync -a --exclude 'hermes-agent' "$HERMES_STATE_DIR/" "$HOME/.hermes/"
+                # Restore hermes data
+                if [ -d "$HERMES_STATE_DIR/hermes" ]; then
+                  rsync -a "$HERMES_STATE_DIR/hermes/" "$HOME/.hermes/"
+                elif [ -d "$HERMES_STATE_DIR" ]; then
+                  rsync -a --exclude 'hermes-agent' "$HERMES_STATE_DIR/" "$HOME/.hermes/"
+                fi
+                # Restore workspace if present in backup
+                if [ -d "$HERMES_STATE_DIR/workspace" ]; then
+                  rsync -a "$HERMES_STATE_DIR/workspace/" "$HOME/workspace/"
+                  echo "Workspace restored from release"
+                fi
                 echo "State restored from release $tag ($(du -sh "$HOME/.hermes" | cut -f1))"
                 restored=1
+
+                # MIGRATION: Push restored data to R2 for future runs
+                if mountpoint -q /mnt/r2 2>/dev/null; then
+                  echo "Migrating restored data to R2..."
+                  rsync -a "$HOME/.hermes/" /mnt/r2/hermes/ \
+                    --exclude 'hermes-agent' --exclude 'hermes-agent/' \
+                    --exclude 'bin' --exclude 'bin/' \
+                    --exclude 'venvs' --exclude 'venvs/' \
+                    --exclude '.env' --exclude '.env.example' \
+                    --exclude 'auth' --exclude 'auth/' \
+                    --exclude 'auth.json' --exclude 'auth.lock' \
+                    --exclude 'logs' --exclude 'logs/' \
+                    --exclude 'whatsapp' --exclude 'whatsapp/' \
+                    --exclude '*.pyc' --exclude '__pycache__' --exclude '__pycache__/' \
+                    --exclude 'node_modules' --exclude '.venv' --exclude 'venv' \
+                    --exclude '.next' --exclude 'dist' --exclude 'build' \
+                    --exclude '.cache' --exclude '.git' --exclude 'target' \
+                    --exclude '.cargo/registry' --exclude 'coverage' --exclude '.nyc_output' \
+                    2>/dev/null || true
+                  if [ -d "$HOME/workspace" ] && [ "$(ls -A "$HOME/workspace" 2>/dev/null)" ]; then
+                    rsync -a "$HOME/workspace/" /mnt/r2/workspace/ 2>/dev/null || true
+                  fi
+                  echo "Migration to R2 complete — future runs will restore from R2 directly"
+                fi
+
                 break
               fi
             fi
           done
           [ "$restored" = "1" ] || echo "No usable release found - first run"
+          rm -rf /tmp/restore "$HERMES_STATE_DIR" 2>/dev/null || true
 
       - name: Install Hermes
         run: |
@@ -175,41 +233,98 @@ jobs:
           hermes doctor || true
           hermes status --all | head -60 || true
 
+      # ── NOTIFY RESTART ────────────────────────────────────────────────
+      - name: Notify restart via Telegram
+        env:
+          TELEGRAM_BOT_TOKEN: ${{ secrets.TELEGRAM_BOT_TOKEN }}
+          TELEGRAM_HOME_CHANNEL: ${{ secrets.TELEGRAM_HOME_CHANNEL }}
+          TELEGRAM_ALLOWED_USERS: ${{ secrets.TELEGRAM_ALLOWED_USERS }}
+        run: |
+          [ ! -f .guard-skip ] || exit 0
+          # Determine how state was restored
+          if mountpoint -q /mnt/r2 2>/dev/null && [ -d /mnt/r2/hermes ]; then
+            restore_source="r2"
+          else
+            restore_source="release"
+          fi
+          bash scripts/notify-restart.sh "$restore_source" || true
+
       - name: Bootstrap autonomous work
         run: |
           [ ! -f .guard-skip ] || exit 0
-          hermes -z "You are running 24/7 from a GitHub Actions runner. Inspect your environment, memory, skills, and cron jobs. If no scheduled cron jobs exist, create 2-3 useful ones (e.g. a morning briefing and a weekly audit) delivered to your home channel, and run a quick memory check. IMPORTANT: do NOT install, start, stop, restart, or manage the gateway service or any systemd units - the workflow launches the gateway immediately after you finish. Do not modify gateway_state.json. Reply with a short summary of what you set up." || true
+          mkdir -p "$HOME/workspace"
+          hermes -z "You are running 24/7 from a GitHub Actions runner. Your data is now persisted on Cloudflare R2 — runner restarts cause ZERO data loss. Inspect your environment, memory, skills, and cron jobs. If no scheduled cron jobs exist, create 2-3 useful ones (e.g. a morning briefing and a weekly audit) delivered to your home channel, and run a quick memory check. Your workspace directory is at ~/workspace/ — any code you write there is persisted. IMPORTANT: do NOT install, start, stop, restart, or manage the gateway service or any systemd units - the workflow launches the gateway immediately after you finish. Do not modify gateway_state.json. Reply with a short summary of what you set up." || true
 
+      # ── RUN GATEWAY WITH R2 SYNC ──────────────────────────────────────
       - name: Run gateway
         env:
           GH_TOKEN: ${{ secrets.GH_PAT || github.token }}
           STATE_ENCRYPTION_KEY: ${{ secrets.STATE_ENCRYPTION_KEY }}
         run: |
           [ ! -f .guard-skip ] || exit 0
-          trap 'bash scripts/release-state.sh "hermes: emergency save on cancel" || true' INT TERM
-          (
-            while [ ! -f "$HOME/.hermes/stop-heartbeat" ]; do
-              sleep 600
-              bash scripts/release-state.sh "hermes: heartbeat $(date -u +%Y-%m-%dT%H:%M:%SZ)" || true
-            done
-          ) &
-          HB_PID=$!
+
+          # Trap: on SIGTERM/SIGINT, flush data to R2 and do emergency release save
+          trap '{
+            echo "Signal received — flushing data to R2..."
+            bash scripts/unmount-r2.sh || true
+            bash scripts/release-state.sh "hermes: emergency save on signal" || true
+          }' INT TERM
+
+          # Start background R2 sync daemon (every 30 seconds)
+          if mountpoint -q /mnt/r2 2>/dev/null; then
+            bash scripts/sync-to-r2.sh &
+            SYNC_PID=$!
+            echo "R2 sync daemon started (PID: $SYNC_PID)"
+          else
+            echo "R2 not mounted — falling back to heartbeat release saves"
+            SYNC_PID=""
+            # Fallback: old-style heartbeat saves to releases
+            (
+              while [ ! -f "$HOME/.hermes/stop-heartbeat" ]; do
+                sleep 600
+                bash scripts/release-state.sh "hermes: heartbeat $(date -u +%Y-%m-%dT%H:%M:%SZ)" || true
+              done
+            ) &
+            SYNC_PID=$!
+          fi
+
+          # Run the gateway
           timeout --signal=TERM --kill-after=60 19500 hermes gateway run --replace || code=$?
           echo "Gateway exited with code ${code:-0}"
-          touch "$HOME/.hermes/stop-heartbeat"
-          kill "$HB_PID" 2>/dev/null || true
-          wait "$HB_PID" || true
+
+          # Stop the sync/heartbeat daemon
+          touch "$HOME/.hermes/stop-r2-sync" 2>/dev/null || true
+          touch "$HOME/.hermes/stop-heartbeat" 2>/dev/null || true
+          if [ -n "${SYNC_PID:-}" ]; then
+            kill "$SYNC_PID" 2>/dev/null || true
+            wait "$SYNC_PID" 2>/dev/null || true
+          fi
           exit 0
 
-      - name: Save state to encrypted release
+      # ── CLEANUP: FLUSH + UNMOUNT + BACKUP + CHAIN ─────────────────────
+      - name: Final sync and unmount R2
+        if: always()
+        run: |
+          [ ! -f .guard-skip ] || exit 0
+          bash scripts/unmount-r2.sh || true
+
+      - name: Save state to encrypted release (backup)
         if: always()
         env:
           GH_TOKEN: ${{ secrets.GH_PAT || github.token }}
           STATE_ENCRYPTION_KEY: ${{ secrets.STATE_ENCRYPTION_KEY }}
         run: |
           [ ! -f .guard-skip ] || exit 0
-          bash scripts/release-state.sh "hermes: final save $(date -u +%Y-%m-%dT%H:%M:%SZ)"
-          echo "State size: $(du -sh "$HERMES_STATE_DIR" | cut -f1)"
+          bash scripts/release-state.sh "hermes: final backup $(date -u +%Y-%m-%dT%H:%M:%SZ)"
+          echo "State backup size: $(du -sh "$HERMES_STATE_DIR" 2>/dev/null | cut -f1 || echo '?')"
+
+      - name: Cleanup old releases
+        if: always()
+        env:
+          GH_TOKEN: ${{ secrets.GH_PAT || github.token }}
+        run: |
+          [ ! -f .guard-skip ] || exit 0
+          bash scripts/cleanup-releases.sh 3 || true
 
       - name: Chain next run
         if: always()
