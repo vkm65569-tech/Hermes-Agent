@@ -51,101 +51,6 @@ jobs:
           [ ! -f .guard-skip ] || exit 0
           bash scripts/mount-r2.sh
 
-      # ── ONE-TIME MIGRATION: Copy R2 data → HuggingFace ────────────────
-      # This step runs ONLY if:
-      #   1. Old R2 secrets still exist (haven't been removed yet)
-      #   2. HF bucket is empty (no data migrated yet)
-      # Once HF has data, this step becomes a no-op. Safe to remove after migration.
-      - name: Migrate R2 data to HuggingFace (one-time)
-        env:
-          R2_ACCOUNT_ID: ${{ secrets.R2_ACCOUNT_ID }}
-          R2_ACCESS_KEY_ID: ${{ secrets.R2_ACCESS_KEY_ID }}
-          R2_SECRET_ACCESS_KEY: ${{ secrets.R2_SECRET_ACCESS_KEY }}
-          R2_BUCKET_NAME: ${{ secrets.R2_BUCKET_NAME }}
-        run: |
-          [ ! -f .guard-skip ] || exit 0
-
-          # Skip if R2 secrets are not set (already removed)
-          if [ -z "${R2_ACCOUNT_ID:-}" ] || [ -z "${R2_ACCESS_KEY_ID:-}" ] || [ -z "${R2_BUCKET_NAME:-}" ]; then
-            echo "R2 secrets not found — migration not needed (already migrated or R2 never used)"
-            exit 0
-          fi
-
-          # Skip if HF already has data (migration already done)
-          if mountpoint -q /mnt/r2 2>/dev/null; then
-            hf_count=$(find /mnt/r2/hermes -maxdepth 1 -type f 2>/dev/null | wc -l || echo "0")
-            hf_dirs=$(find /mnt/r2/hermes -maxdepth 1 -mindepth 1 -type d 2>/dev/null | wc -l || echo "0")
-            if [ "$((hf_count + hf_dirs))" -gt 0 ]; then
-              echo "HF bucket already has data (${hf_count} files, ${hf_dirs} dirs) — skipping migration"
-              exit 0
-            fi
-          else
-            echo "HF mount not available — skipping migration"
-            exit 0
-          fi
-
-          echo "=== ONE-TIME MIGRATION: R2 → HuggingFace ==="
-
-          # Add R2 remote to existing rclone config (printf avoids heredoc YAML issues)
-          {
-            printf '\n[r2-old]\n'
-            printf 'type = s3\n'
-            printf 'provider = Cloudflare\n'
-            printf 'access_key_id = %s\n' "${R2_ACCESS_KEY_ID}"
-            printf 'secret_access_key = %s\n' "${R2_SECRET_ACCESS_KEY}"
-            printf 'endpoint = https://%s.r2.cloudflarestorage.com\n' "${R2_ACCOUNT_ID}"
-            printf 'no_check_bucket = true\n'
-          } >> "${HOME}/.config/rclone/rclone.conf"
-
-          # Copy R2 hermes data → local temp → HF mount (via encrypted FUSE)
-          echo "Step 1: Downloading from R2..."
-          mkdir -p /tmp/r2-migration/hermes /tmp/r2-migration/workspace
-          rclone copy "r2-old:${R2_BUCKET_NAME}/hermes/" /tmp/r2-migration/hermes/ \
-            --transfers 8 --checkers 8 -v 2>&1 | tail -5 || true
-          rclone copy "r2-old:${R2_BUCKET_NAME}/workspace/" /tmp/r2-migration/workspace/ \
-            --transfers 8 --checkers 8 -v 2>&1 | tail -5 || true
-
-          r2_size=$(du -sh /tmp/r2-migration 2>/dev/null | cut -f1 || echo "?")
-          echo "Downloaded from R2: ${r2_size}"
-
-          echo "Step 2: Copying to HuggingFace (encrypted)..."
-          rsync -av /tmp/r2-migration/hermes/ /mnt/r2/hermes/ || true
-          rsync -av /tmp/r2-migration/workspace/ /mnt/r2/workspace/ || true
-
-          # Wait for VFS write-back to flush all data to HuggingFace
-          echo "Step 2.5: Waiting for VFS write-back to flush..."
-          sleep 30
-          # Force sync to ensure all writes are flushed
-          sync 2>/dev/null || true
-
-          # Verify data actually reached HuggingFace
-          echo "Step 2.6: Verifying data on HuggingFace..."
-          hf_size=$(rclone size "hf:${HF_BUCKET_NAME}/hermes-storage/" 2>/dev/null || echo "unknown")
-          echo "HuggingFace bucket size: ${hf_size}"
-          hf_files=$(rclone ls "hf:${HF_BUCKET_NAME}/hermes-storage/" 2>/dev/null | wc -l || echo "0")
-          echo "HuggingFace encrypted files: ${hf_files}"
-
-          if [ "${hf_files}" -gt 0 ] 2>/dev/null; then
-            echo "✅ Verified: ${hf_files} encrypted files on HuggingFace"
-          else
-            echo "⚠️  No files detected on HuggingFace yet — VFS may still be flushing"
-            echo "The sync daemon will continue uploading during this run"
-          fi
-
-          # Also restore to local disk for this run
-          echo "Step 3: Restoring to local disk for current run..."
-          rsync -a --ignore-existing /tmp/r2-migration/hermes/ "$HOME/.hermes/" 2>/dev/null || true
-          rsync -a --ignore-existing /tmp/r2-migration/workspace/ "$HOME/workspace/" 2>/dev/null || true
-
-          # Mark as restored so release restore is skipped
-          touch "$HOME/.hermes/.r2-restored"
-
-          # Cleanup temp
-          rm -rf /tmp/r2-migration
-
-          echo "=== MIGRATION COMPLETE ==="
-          echo "R2 data (${r2_size}) migrated to encrypted HuggingFace bucket"
-          echo "You can now remove R2 secrets from GitHub: R2_ACCOUNT_ID, R2_ACCESS_KEY_ID, R2_SECRET_ACCESS_KEY, R2_BUCKET_NAME"
 
       # ── RESTORE STATE (R2 first, then releases as fallback) ───────────
       - name: Restore Hermes state
@@ -204,19 +109,7 @@ jobs:
                 echo "State restored from release $tag ($(du -sh "$HOME/.hermes" | cut -f1))"
                 restored=1
 
-                # MIGRATION: Push restored data to R2 for future runs
-                if mountpoint -q /mnt/r2 2>/dev/null; then
-                  echo "Migrating restored data to R2..."
-                  rsync -a "$HOME/.hermes/" /mnt/r2/hermes/ \
-                    --exclude 'hermes-agent' --exclude 'hermes-agent/' \
-                    --exclude 'bin' --exclude 'bin/' \
-                    --exclude 'venvs' --exclude 'venvs/' \
-                    2>/dev/null || true
-                  if [ -d "$HOME/workspace" ] && [ "$(ls -A "$HOME/workspace" 2>/dev/null)" ]; then
-                    rsync -a "$HOME/workspace/" /mnt/r2/workspace/ 2>/dev/null || true
-                  fi
-                  echo "Migration to R2 complete — future runs will restore from R2 directly"
-                fi
+
 
                 break
               fi
