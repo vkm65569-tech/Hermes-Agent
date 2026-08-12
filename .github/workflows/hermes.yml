@@ -145,6 +145,7 @@ jobs:
           KIMI_API_KEY: ${{ secrets.KIMI_API_KEY }}
           HF_TOKEN: ${{ secrets.HF_TOKEN }}
           DEEPINFRA_API_KEY: ${{ secrets.DEEPINFRA_API_KEY }}
+          NVIDIA_API_KEY: ${{ secrets.NVIDIA_API_KEY }}
           EXA_API_KEY: ${{ secrets.EXA_API_KEY }}
           PARALLEL_API_KEY: ${{ secrets.PARALLEL_API_KEY }}
           FIRECRAWL_API_KEY: ${{ secrets.FIRECRAWL_API_KEY }}
@@ -173,6 +174,7 @@ jobs:
           for var in \
             OPENCODE_ZEN_API_KEY OPENROUTER_API_KEY ANTHROPIC_API_KEY GOOGLE_API_KEY GEMINI_API_KEY \
             NOUS_API_KEY FIREWORKS_API_KEY KIMI_API_KEY HF_TOKEN DEEPINFRA_API_KEY \
+            NVIDIA_API_KEY \
             EXA_API_KEY PARALLEL_API_KEY FIRECRAWL_API_KEY FAL_KEY HONCHO_API_KEY \
             TELEGRAM_BOT_TOKEN TELEGRAM_ALLOWED_USERS TELEGRAM_HOME_CHANNEL \
             TELEGRAM_CRON_THREAD_ID SLACK_BOT_TOKEN SLACK_APP_TOKEN SLACK_ALLOWED_USERS; do
@@ -200,11 +202,16 @@ jobs:
               opencode-zen) base_url="https://opencode.ai/zen/v1" ;;
               openrouter)   base_url="https://openrouter.ai/api/v1" ;;
               gemini)       base_url="https://generativelanguage.googleapis.com/v1beta/openai" ;;
+              nvidia)       base_url="https://integrate.api.nvidia.com/v1" ;;
               *)            base_url="" ;;
             esac
             if [ -n "$base_url" ]; then
               hermes config set model.base_url "$base_url"
               echo "base_url -> $base_url"
+            fi
+            if [ "$HERMES_PROVIDER" = "nvidia" ]; then
+              hermes config set model.context_length 1048576
+              echo "context_length -> 1048576 (Nemotron 3 Ultra 550B-A55B 1M window)"
             fi
           fi
           if [ -n "$HERMES_MODEL" ]; then
