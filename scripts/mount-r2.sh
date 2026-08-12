@@ -1,15 +1,17 @@
 #!/usr/bin/env bash
-# mount-r2.sh — Mount Cloudflare R2 bucket as local filesystem via rclone FUSE.
+# mount-r2.sh — Mount HuggingFace public bucket as encrypted local filesystem
+#               via rclone FUSE + rclone crypt (zero-knowledge encryption).
 #
 # This script:
 #   1. Installs rclone + fuse3 if missing
-#   2. Writes rclone.conf from environment variables
-#   3. Mounts R2 bucket at /mnt/r2 with write-back VFS cache
-#   4. Restores data from R2 → ~/.hermes/ and ~/workspace/
-#   5. If R2 is empty (first run), leaves restoration to the release-restore step
+#   2. Writes rclone.conf with HF S3 remote + crypt overlay
+#   3. Mounts the encrypted bucket at /mnt/r2 (decrypted view)
+#   4. Restores data from bucket → ~/.hermes/ and ~/workspace/
+#   5. If bucket is empty (first run), leaves restoration to release-restore step
 #
 # Required env vars:
-#   R2_ACCOUNT_ID, R2_ACCESS_KEY_ID, R2_SECRET_ACCESS_KEY, R2_BUCKET_NAME
+#   HF_S3_ACCESS_KEY, HF_S3_SECRET_KEY, HF_BUCKET_NAME,
+#   HF_CRYPT_PASSWORD, HF_CRYPT_SALT
 #
 set -euo pipefail
 
@@ -19,9 +21,9 @@ WORKSPACE="${HOME}/workspace"
 RCLONE_LOG="/tmp/rclone-mount.log"
 
 # ── 1. Validate required env vars ────────────────────────────────────────────
-for var in R2_ACCOUNT_ID R2_ACCESS_KEY_ID R2_SECRET_ACCESS_KEY R2_BUCKET_NAME; do
+for var in HF_S3_ACCESS_KEY HF_S3_SECRET_KEY HF_BUCKET_NAME HF_CRYPT_PASSWORD HF_CRYPT_SALT; do
   if [ -z "${!var:-}" ]; then
-    echo "⚠️  R2 secret '$var' is not set — skipping R2 mount (falling back to release-only mode)"
+    echo "⚠️  HuggingFace secret '$var' is not set — skipping mount (falling back to release-only mode)"
     exit 0
   fi
 done
@@ -37,22 +39,35 @@ if ! dpkg -s fuse3 &>/dev/null 2>&1; then
   sudo apt-get update -qq && sudo apt-get install -y -qq fuse3
 fi
 
-# ── 3. Write rclone config ──────────────────────────────────────────────────
+# ── 3. Obscure crypt passwords (rclone requires obscured form) ──────────────
+echo "Generating obscured crypt credentials..."
+CRYPT_PASS_OBSCURED=$(rclone obscure "${HF_CRYPT_PASSWORD}")
+CRYPT_SALT_OBSCURED=$(rclone obscure "${HF_CRYPT_SALT}")
+
+# ── 4. Write rclone config (HF S3 + crypt overlay) ─────────────────────────
 mkdir -p "${HOME}/.config/rclone"
 cat > "${HOME}/.config/rclone/rclone.conf" <<EOF
-[r2]
+[hf]
 type = s3
-provider = Cloudflare
-access_key_id = ${R2_ACCESS_KEY_ID}
-secret_access_key = ${R2_SECRET_ACCESS_KEY}
-endpoint = https://${R2_ACCOUNT_ID}.r2.cloudflarestorage.com
-acl = private
+provider = Other
+access_key_id = ${HF_S3_ACCESS_KEY}
+secret_access_key = ${HF_S3_SECRET_KEY}
+endpoint = https://s3.hf.co
+region = us-east-1
 no_check_bucket = true
+
+[hf-crypt]
+type = crypt
+remote = hf:${HF_BUCKET_NAME}/hermes-storage
+filename_encryption = standard
+directory_name_encryption = true
+password = ${CRYPT_PASS_OBSCURED}
+password2 = ${CRYPT_SALT_OBSCURED}
 EOF
 chmod 600 "${HOME}/.config/rclone/rclone.conf"
-echo "rclone config written"
+echo "rclone config written (HuggingFace S3 + crypt encryption)"
 
-# ── 4. Create mount point & mount R2 ────────────────────────────────────────
+# ── 5. Create mount point & mount encrypted bucket ──────────────────────────
 sudo mkdir -p "${MOUNT_POINT}"
 sudo chown "$(whoami)" "${MOUNT_POINT}"
 
@@ -62,8 +77,8 @@ if mountpoint -q "${MOUNT_POINT}" 2>/dev/null; then
   sleep 1
 fi
 
-echo "Mounting R2 bucket '${R2_BUCKET_NAME}' at ${MOUNT_POINT}..."
-rclone mount "r2:${R2_BUCKET_NAME}" "${MOUNT_POINT}" \
+echo "Mounting HuggingFace encrypted bucket at ${MOUNT_POINT}..."
+rclone mount "hf-crypt:" "${MOUNT_POINT}" \
   --vfs-cache-mode full \
   --vfs-write-back 5s \
   --vfs-cache-max-size 2G \
@@ -79,63 +94,64 @@ rclone mount "r2:${R2_BUCKET_NAME}" "${MOUNT_POINT}" \
 # Wait for mount to be ready (up to 15 seconds)
 for i in $(seq 1 15); do
   if mountpoint -q "${MOUNT_POINT}" 2>/dev/null; then
-    echo "R2 mounted successfully at ${MOUNT_POINT} (took ${i}s)"
+    echo "Encrypted bucket mounted successfully at ${MOUNT_POINT} (took ${i}s)"
     break
   fi
   sleep 1
 done
 
 if ! mountpoint -q "${MOUNT_POINT}" 2>/dev/null; then
-  echo "❌ R2 mount failed! Logs:"
+  echo "❌ Mount failed! Logs:"
   cat "${RCLONE_LOG}" | tail -30
   echo "Falling back to release-only mode"
   exit 0
 fi
 
-# ── 5. Test mount with a write/read ─────────────────────────────────────────
+# ── 6. Test mount with a write/read ─────────────────────────────────────────
 test_file="${MOUNT_POINT}/.mount-test-$(date +%s)"
 echo "ok" > "${test_file}" 2>/dev/null || true
 if [ -f "${test_file}" ]; then
   rm -f "${test_file}"
-  echo "R2 mount read/write test: PASSED ✅"
+  echo "Encrypted mount read/write test: PASSED ✅"
 else
-  echo "⚠️  R2 mount read/write test: FAILED (read-only or permission issue)"
+  echo "⚠️  Encrypted mount read/write test: FAILED (read-only or permission issue)"
   echo "Falling back to release-only mode"
   fusermount -u "${MOUNT_POINT}" 2>/dev/null || true
   exit 0
 fi
 
-# ── 6. Create R2 directory structure if empty (first run) ────────────────────
+# ── 7. Create directory structure if empty (first run) ───────────────────────
 mkdir -p "${MOUNT_POINT}/hermes"
 mkdir -p "${MOUNT_POINT}/workspace"
 
-# ── 7. Restore data from R2 → local dirs ────────────────────────────────────
+# ── 8. Restore data from bucket → local dirs ────────────────────────────────
 mkdir -p "${HERMES_HOME}"
 mkdir -p "${WORKSPACE}"
 
-# Check if R2 has existing data (non-empty hermes/ dir)
+# Check if bucket has existing data (non-empty hermes/ dir)
 r2_file_count=$(find "${MOUNT_POINT}/hermes" -maxdepth 1 -type f 2>/dev/null | wc -l || echo "0")
 r2_dir_count=$(find "${MOUNT_POINT}/hermes" -maxdepth 1 -mindepth 1 -type d 2>/dev/null | wc -l || echo "0")
 
 if [ "$((r2_file_count + r2_dir_count))" -gt 0 ]; then
-  echo "R2 has existing data (${r2_file_count} files, ${r2_dir_count} dirs) — restoring to ~/.hermes/"
+  echo "Bucket has existing data (${r2_file_count} files, ${r2_dir_count} dirs) — restoring to ~/.hermes/"
   rsync -a --ignore-existing "${MOUNT_POINT}/hermes/" "${HERMES_HOME}/"
-  echo "Hermes data restored from R2: $(du -sh "${HERMES_HOME}" | cut -f1)"
+  echo "Hermes data restored from bucket: $(du -sh "${HERMES_HOME}" | cut -f1)"
 
   if [ -d "${MOUNT_POINT}/workspace" ] && [ "$(ls -A "${MOUNT_POINT}/workspace" 2>/dev/null)" ]; then
     rsync -a --ignore-existing "${MOUNT_POINT}/workspace/" "${WORKSPACE}/"
-    echo "Workspace restored from R2: $(du -sh "${WORKSPACE}" | cut -f1)"
+    echo "Workspace restored from bucket: $(du -sh "${WORKSPACE}" | cut -f1)"
   fi
 
-  # Mark that we restored from R2 (so release restore can be skipped)
+  # Mark that we restored from bucket (so release restore can be skipped)
   touch "${HERMES_HOME}/.r2-restored"
   echo "R2_RESTORED=true" >> "${GITHUB_ENV:-/dev/null}" 2>/dev/null || true
 else
-  echo "R2 is empty — this is either a first run or data needs to be migrated from releases"
+  echo "Bucket is empty — this is either a first run or data needs to be migrated from releases"
   echo "R2_RESTORED=false" >> "${GITHUB_ENV:-/dev/null}" 2>/dev/null || true
 fi
 
-echo "R2 mount setup complete"
-echo "  Mount point: ${MOUNT_POINT}"
+echo "Encrypted mount setup complete"
+echo "  Mount point: ${MOUNT_POINT} (decrypted view)"
+echo "  HuggingFace bucket: ${HF_BUCKET_NAME}/hermes-storage (encrypted)"
 echo "  Hermes data: ${MOUNT_POINT}/hermes/"
 echo "  Workspace:   ${MOUNT_POINT}/workspace/"

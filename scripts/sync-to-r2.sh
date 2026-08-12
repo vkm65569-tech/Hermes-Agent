@@ -1,9 +1,9 @@
 #!/usr/bin/env bash
 # sync-to-r2.sh — Background daemon that continuously syncs ~/.hermes/ and
-# ~/workspace/ to the R2 FUSE mount, excluding only regenerable runtime junk.
+# ~/workspace/ to the encrypted HuggingFace bucket via FUSE mount.
 #
-# Design: BLACKLIST approach — everything is synced by default.
-# Only explicitly listed regenerable artifacts are excluded.
+# Design: SAVE EVERYTHING. Only the Hermes engine (reinstalled on each run)
+# and runtime signal files are excluded for performance.
 #
 # Usage:
 #   bash scripts/sync-to-r2.sh &          # start background daemon
@@ -34,90 +34,25 @@ while [ ! -f "${STOP_FLAG}" ]; do
 
   # Check mount is still healthy
   if ! mountpoint -q "${MOUNT_POINT}" 2>/dev/null; then
-    echo "[r2-sync] ⚠️  R2 mount lost at ${MOUNT_POINT} — skipping sync" >> "${SYNC_LOG}"
+    echo "[r2-sync] ⚠️  Mount lost at ${MOUNT_POINT} — skipping sync" >> "${SYNC_LOG}"
     continue
   fi
 
   sync_count=$((sync_count + 1))
   ts=$(date -u +%H:%M:%S)
 
-  # ── Sync ~/.hermes/ → R2 (exclude only engine/runtime dirs) ──────────
-  # NOTE: ~/.hermes/work/ contains project repos (AutoSiteAgents, PainScout)
-  # which have their own node_modules/, .git/, etc. — exclude those too.
+  # ── Sync ~/.hermes/ → bucket (exclude only engine + runtime signals) ──
   rsync -a --delete \
-    --exclude 'hermes-agent' \
-    --exclude 'hermes-agent/' \
-    --exclude 'bin' \
-    --exclude 'bin/' \
-    --exclude 'venvs' \
-    --exclude 'venvs/' \
-    --exclude 'auth' \
-    --exclude 'auth/' \
-    --exclude 'auth.json' \
-    --exclude 'auth.lock' \
-    --exclude 'logs' \
-    --exclude 'logs/' \
-    --exclude 'whatsapp' \
-    --exclude 'whatsapp/' \
-    --exclude 'stop-r2-sync' \
-    --exclude 'stop-heartbeat' \
-    --exclude 'ticker_heartbeat' \
-    --exclude 'gateway.pid' \
-    --exclude 'gateway.lock' \
-    --exclude '*.pyc' \
-    --exclude '__pycache__' \
-    --exclude '__pycache__/' \
-    --exclude 'node_modules' \
-    --exclude '.venv' \
-    --exclude 'venv' \
-    --exclude '.next' \
-    --exclude 'dist' \
-    --exclude 'build' \
-    --exclude '.cache' \
-    --exclude '.git' \
-    --exclude 'target' \
-    --exclude '.cargo/registry' \
-    --exclude 'coverage' \
-    --exclude '.nyc_output' \
+    --exclude 'hermes-agent' --exclude 'hermes-agent/' \
+    --exclude 'bin' --exclude 'bin/' \
+    --exclude 'venvs' --exclude 'venvs/' \
+    --exclude 'stop-r2-sync' --exclude 'stop-heartbeat' \
+    --exclude 'ticker_heartbeat' --exclude 'gateway.pid' --exclude 'gateway.lock' \
     "${HERMES_HOME}/" "${MOUNT_POINT}/hermes/" 2>>"${SYNC_LOG}" || true
 
-  # ── Sync ~/workspace/ → R2 (exclude only regenerable build artifacts) ─
+  # ── Sync ~/workspace/ → bucket (save everything) ──────────────────────
   if [ -d "${WORKSPACE}" ] && [ "$(ls -A "${WORKSPACE}" 2>/dev/null)" ]; then
     rsync -a --delete \
-      --exclude 'node_modules' \
-      --exclude 'node_modules/' \
-      --exclude '.venv' \
-      --exclude '.venv/' \
-      --exclude 'venv' \
-      --exclude 'venv/' \
-      --exclude '__pycache__' \
-      --exclude '__pycache__/' \
-      --exclude '*.pyc' \
-      --exclude '*.pyo' \
-      --exclude '.next' \
-      --exclude '.next/' \
-      --exclude 'dist' \
-      --exclude 'dist/' \
-      --exclude 'build' \
-      --exclude 'build/' \
-      --exclude '.cache' \
-      --exclude '.cache/' \
-      --exclude '.git' \
-      --exclude '.git/' \
-      --exclude 'coverage' \
-      --exclude 'coverage/' \
-      --exclude '.nyc_output' \
-      --exclude '.nyc_output/' \
-      --exclude 'target' \
-      --exclude 'target/' \
-      --exclude '.cargo/registry' \
-      --exclude '.npm' \
-      --exclude '.npm/' \
-      --exclude '.pnpm-store' \
-      --exclude '.pnpm-store/' \
-      --exclude '.yarn/cache' \
-      --exclude '.turbo' \
-      --exclude '.turbo/' \
       "${WORKSPACE}/" "${MOUNT_POINT}/workspace/" 2>>"${SYNC_LOG}" || true
   fi
 
@@ -131,44 +66,18 @@ done
 
 echo "[r2-sync] Received stop signal — running final sync..." | tee -a "${SYNC_LOG}"
 
-# ── Final sync (same as above but logged more verbosely) ────────────────────
+# ── Final sync (same excludes, logged more verbosely) ───────────────────────
 if mountpoint -q "${MOUNT_POINT}" 2>/dev/null; then
   rsync -a --delete \
     --exclude 'hermes-agent' --exclude 'hermes-agent/' \
     --exclude 'bin' --exclude 'bin/' \
     --exclude 'venvs' --exclude 'venvs/' \
-    --exclude 'auth' --exclude 'auth/' \
-    --exclude 'auth.json' --exclude 'auth.lock' \
-    --exclude 'logs' --exclude 'logs/' \
-    --exclude 'whatsapp' --exclude 'whatsapp/' \
     --exclude 'stop-r2-sync' --exclude 'stop-heartbeat' \
     --exclude 'ticker_heartbeat' --exclude 'gateway.pid' --exclude 'gateway.lock' \
-    --exclude '*.pyc' --exclude '__pycache__' --exclude '__pycache__/' \
-    --exclude 'node_modules' --exclude '.venv' --exclude 'venv' \
-    --exclude '.next' --exclude 'dist' --exclude 'build' \
-    --exclude '.cache' --exclude '.git' --exclude 'target' \
-    --exclude '.cargo/registry' --exclude 'coverage' --exclude '.nyc_output' \
     "${HERMES_HOME}/" "${MOUNT_POINT}/hermes/" 2>>"${SYNC_LOG}" || true
 
   if [ -d "${WORKSPACE}" ] && [ "$(ls -A "${WORKSPACE}" 2>/dev/null)" ]; then
     rsync -a --delete \
-      --exclude 'node_modules' --exclude 'node_modules/' \
-      --exclude '.venv' --exclude '.venv/' \
-      --exclude 'venv' --exclude 'venv/' \
-      --exclude '__pycache__' --exclude '__pycache__/' \
-      --exclude '*.pyc' --exclude '*.pyo' \
-      --exclude '.next' --exclude '.next/' \
-      --exclude 'dist' --exclude 'dist/' \
-      --exclude 'build' --exclude 'build/' \
-      --exclude '.cache' --exclude '.cache/' \
-      --exclude '.git' --exclude '.git/' \
-      --exclude 'coverage' --exclude 'coverage/' \
-      --exclude '.nyc_output' --exclude '.nyc_output/' \
-      --exclude 'target' --exclude 'target/' \
-      --exclude '.cargo/registry' \
-      --exclude '.npm' --exclude '.npm/' \
-      --exclude '.pnpm-store' --exclude '.pnpm-store/' \
-      --exclude '.yarn/cache' --exclude '.turbo' --exclude '.turbo/' \
       "${WORKSPACE}/" "${MOUNT_POINT}/workspace/" 2>>"${SYNC_LOG}" || true
   fi
 

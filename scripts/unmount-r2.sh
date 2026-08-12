@@ -43,38 +43,12 @@ if mountpoint -q "${MOUNT_POINT}" 2>/dev/null; then
     --exclude 'hermes-agent' --exclude 'hermes-agent/' \
     --exclude 'bin' --exclude 'bin/' \
     --exclude 'venvs' --exclude 'venvs/' \
-    --exclude 'auth' --exclude 'auth/' \
-    --exclude 'auth.json' --exclude 'auth.lock' \
-    --exclude 'logs' --exclude 'logs/' \
-    --exclude 'whatsapp' --exclude 'whatsapp/' \
     --exclude 'stop-r2-sync' --exclude 'stop-heartbeat' \
     --exclude 'ticker_heartbeat' --exclude 'gateway.pid' --exclude 'gateway.lock' \
-    --exclude '*.pyc' --exclude '__pycache__' --exclude '__pycache__/' \
-    --exclude 'node_modules' --exclude '.venv' --exclude 'venv' \
-    --exclude '.next' --exclude 'dist' --exclude 'build' \
-    --exclude '.cache' --exclude '.git' --exclude 'target' \
-    --exclude '.cargo/registry' --exclude 'coverage' --exclude '.nyc_output' \
     "${HERMES_HOME}/" "${MOUNT_POINT}/hermes/" 2>/dev/null || true
 
   if [ -d "${HOME}/workspace" ] && [ "$(ls -A "${HOME}/workspace" 2>/dev/null)" ]; then
     rsync -a --delete \
-      --exclude 'node_modules' --exclude 'node_modules/' \
-      --exclude '.venv' --exclude '.venv/' \
-      --exclude 'venv' --exclude 'venv/' \
-      --exclude '__pycache__' --exclude '__pycache__/' \
-      --exclude '*.pyc' --exclude '*.pyo' \
-      --exclude '.next' --exclude '.next/' \
-      --exclude 'dist' --exclude 'dist/' \
-      --exclude 'build' --exclude 'build/' \
-      --exclude '.cache' --exclude '.cache/' \
-      --exclude '.git' --exclude '.git/' \
-      --exclude 'coverage' --exclude 'coverage/' \
-      --exclude '.nyc_output' --exclude '.nyc_output/' \
-      --exclude 'target' --exclude 'target/' \
-      --exclude '.cargo/registry' \
-      --exclude '.npm' --exclude '.npm/' \
-      --exclude '.pnpm-store' --exclude '.pnpm-store/' \
-      --exclude '.yarn/cache' --exclude '.turbo' --exclude '.turbo/' \
       "${HOME}/workspace/" "${MOUNT_POINT}/workspace/" 2>/dev/null || true
   fi
 

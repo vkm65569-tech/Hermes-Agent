@@ -43,57 +43,17 @@ rsync -a --delete \
   --exclude 'bin/' \
   --exclude 'venvs' \
   --exclude 'venvs/' \
-  --exclude 'auth' \
-  --exclude 'auth/' \
-  --exclude 'auth.json' \
-  --exclude 'auth.lock' \
-  --exclude 'logs' \
-  --exclude 'logs/' \
-  --exclude 'whatsapp' \
-  --exclude 'whatsapp/' \
   --exclude 'stop-r2-sync' \
   --exclude 'stop-heartbeat' \
   --exclude 'ticker_heartbeat' \
   --exclude 'gateway.pid' \
   --exclude 'gateway.lock' \
-  --exclude '*.pyc' \
-  --exclude '__pycache__' \
-  --exclude '__pycache__/' \
-  --exclude 'node_modules' \
-  --exclude '.venv' \
-  --exclude 'venv' \
-  --exclude '.next' \
-  --exclude 'dist' \
-  --exclude 'build' \
-  --exclude '.cache' \
-  --exclude '.git' \
-  --exclude 'target' \
-  --exclude '.cargo/registry' \
-  --exclude 'coverage' \
-  --exclude '.nyc_output' \
   "${HERMES_SOURCE}/" "${STATE_DIR}/hermes/"
 
-# ── Sync workspace (source code only, exclude runtime junk) ──────────────────
+# ── Sync workspace (save everything) ─────────────────────────────────────────
 if [ -d "${WORKSPACE_SOURCE}" ] && [ "$(ls -A "${WORKSPACE_SOURCE}" 2>/dev/null)" ]; then
   mkdir -p "${STATE_DIR}/workspace"
   rsync -a --delete \
-    --exclude 'node_modules' --exclude 'node_modules/' \
-    --exclude '.venv' --exclude '.venv/' \
-    --exclude 'venv' --exclude 'venv/' \
-    --exclude '__pycache__' --exclude '__pycache__/' \
-    --exclude '*.pyc' --exclude '*.pyo' \
-    --exclude '.next' --exclude '.next/' \
-    --exclude 'dist' --exclude 'dist/' \
-    --exclude 'build' --exclude 'build/' \
-    --exclude '.cache' --exclude '.cache/' \
-    --exclude '.git' --exclude '.git/' \
-    --exclude 'coverage' --exclude 'coverage/' \
-    --exclude '.nyc_output' --exclude '.nyc_output/' \
-    --exclude 'target' --exclude 'target/' \
-    --exclude '.cargo/registry' \
-    --exclude '.npm' --exclude '.npm/' \
-    --exclude '.pnpm-store' --exclude '.pnpm-store/' \
-    --exclude '.yarn/cache' --exclude '.turbo' --exclude '.turbo/' \
     "${WORKSPACE_SOURCE}/" "${STATE_DIR}/workspace/"
   echo "Workspace included in backup ($(du -sh "${STATE_DIR}/workspace" | cut -f1))"
 fi

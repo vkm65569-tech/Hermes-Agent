@@ -39,13 +39,14 @@ jobs:
       - name: Checkout
         uses: actions/checkout@v4
 
-      # ── R2 PERSISTENT STORAGE ─────────────────────────────────────────
-      - name: Mount R2 persistent storage
+      # ── ENCRYPTED PERSISTENT STORAGE (HuggingFace + rclone crypt) ────
+      - name: Mount encrypted persistent storage
         env:
-          R2_ACCOUNT_ID: ${{ secrets.R2_ACCOUNT_ID }}
-          R2_ACCESS_KEY_ID: ${{ secrets.R2_ACCESS_KEY_ID }}
-          R2_SECRET_ACCESS_KEY: ${{ secrets.R2_SECRET_ACCESS_KEY }}
-          R2_BUCKET_NAME: ${{ secrets.R2_BUCKET_NAME }}
+          HF_S3_ACCESS_KEY: ${{ secrets.HF_S3_ACCESS_KEY }}
+          HF_S3_SECRET_KEY: ${{ secrets.HF_S3_SECRET_KEY }}
+          HF_BUCKET_NAME: ${{ secrets.HF_BUCKET_NAME }}
+          HF_CRYPT_PASSWORD: ${{ secrets.HF_CRYPT_PASSWORD }}
+          HF_CRYPT_SALT: ${{ secrets.HF_CRYPT_SALT }}
         run: |
           [ ! -f .guard-skip ] || exit 0
           bash scripts/mount-r2.sh
@@ -114,15 +115,6 @@ jobs:
                     --exclude 'hermes-agent' --exclude 'hermes-agent/' \
                     --exclude 'bin' --exclude 'bin/' \
                     --exclude 'venvs' --exclude 'venvs/' \
-                    --exclude 'auth' --exclude 'auth/' \
-                    --exclude 'auth.json' --exclude 'auth.lock' \
-                    --exclude 'logs' --exclude 'logs/' \
-                    --exclude 'whatsapp' --exclude 'whatsapp/' \
-                    --exclude '*.pyc' --exclude '__pycache__' --exclude '__pycache__/' \
-                    --exclude 'node_modules' --exclude '.venv' --exclude 'venv' \
-                    --exclude '.next' --exclude 'dist' --exclude 'build' \
-                    --exclude '.cache' --exclude '.git' --exclude 'target' \
-                    --exclude '.cargo/registry' --exclude 'coverage' --exclude '.nyc_output' \
                     2>/dev/null || true
                   if [ -d "$HOME/workspace" ] && [ "$(ls -A "$HOME/workspace" 2>/dev/null)" ]; then
                     rsync -a "$HOME/workspace/" /mnt/r2/workspace/ 2>/dev/null || true
@@ -266,7 +258,7 @@ jobs:
         run: |
           [ ! -f .guard-skip ] || exit 0
           mkdir -p "$HOME/workspace"
-          hermes -z "You are running 24/7 from a GitHub Actions runner. Your data is now persisted on Cloudflare R2 — runner restarts cause ZERO data loss. Inspect your environment, memory, skills, and cron jobs. If no scheduled cron jobs exist, create 2-3 useful ones (e.g. a morning briefing and a weekly audit) delivered to your home channel, and run a quick memory check. Your workspace directory is at ~/workspace/ — any code you write there is persisted. IMPORTANT: do NOT install, start, stop, restart, or manage the gateway service or any systemd units - the workflow launches the gateway immediately after you finish. Do not modify gateway_state.json. Reply with a short summary of what you set up." || true
+          hermes -z "You are running 24/7 from a GitHub Actions runner. Your data is now persisted on encrypted HuggingFace storage - runner restarts cause ZERO data loss. Inspect your environment, memory, skills, and cron jobs. If no scheduled cron jobs exist, create 2-3 useful ones (e.g. a morning briefing and a weekly audit) delivered to your home channel, and run a quick memory check. Your workspace directory is at ~/workspace/ - any code you write there is persisted. IMPORTANT: do NOT install, start, stop, restart, or manage the gateway service or any systemd units - the workflow launches the gateway immediately after you finish. Do not modify gateway_state.json. Reply with a short summary of what you set up." || true
 
       # ── RUN GATEWAY WITH R2 SYNC ──────────────────────────────────────
       - name: Run gateway
