@@ -109,8 +109,28 @@ jobs:
           echo "Downloaded from R2: ${r2_size}"
 
           echo "Step 2: Copying to HuggingFace (encrypted)..."
-          rsync -a /tmp/r2-migration/hermes/ /mnt/r2/hermes/ 2>/dev/null || true
-          rsync -a /tmp/r2-migration/workspace/ /mnt/r2/workspace/ 2>/dev/null || true
+          rsync -av /tmp/r2-migration/hermes/ /mnt/r2/hermes/ || true
+          rsync -av /tmp/r2-migration/workspace/ /mnt/r2/workspace/ || true
+
+          # Wait for VFS write-back to flush all data to HuggingFace
+          echo "Step 2.5: Waiting for VFS write-back to flush..."
+          sleep 30
+          # Force sync to ensure all writes are flushed
+          sync 2>/dev/null || true
+
+          # Verify data actually reached HuggingFace
+          echo "Step 2.6: Verifying data on HuggingFace..."
+          hf_size=$(rclone size "hf:${HF_BUCKET_NAME}/hermes-storage/" 2>/dev/null || echo "unknown")
+          echo "HuggingFace bucket size: ${hf_size}"
+          hf_files=$(rclone ls "hf:${HF_BUCKET_NAME}/hermes-storage/" 2>/dev/null | wc -l || echo "0")
+          echo "HuggingFace encrypted files: ${hf_files}"
+
+          if [ "${hf_files}" -gt 0 ] 2>/dev/null; then
+            echo "✅ Verified: ${hf_files} encrypted files on HuggingFace"
+          else
+            echo "⚠️  No files detected on HuggingFace yet — VFS may still be flushing"
+            echo "The sync daemon will continue uploading during this run"
+          fi
 
           # Also restore to local disk for this run
           echo "Step 3: Restoring to local disk for current run..."
