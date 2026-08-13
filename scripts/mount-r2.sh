@@ -44,20 +44,7 @@ echo "Generating obscured crypt credentials..."
 CRYPT_PASS_OBSCURED=$(rclone obscure "${HF_CRYPT_PASSWORD}")
 CRYPT_SALT_OBSCURED=$(rclone obscure "${HF_CRYPT_SALT}")
 
-# ── 4. Parse HF_BUCKET_NAME & Write rclone config ──────────────────────────
-if [[ "${HF_BUCKET_NAME}" == *"/"* ]]; then
-  HF_NAMESPACE="${HF_BUCKET_NAME%%/*}"
-  HF_ONLY_BUCKET="${HF_BUCKET_NAME#*/}"
-else
-  HF_NAMESPACE=""
-  HF_ONLY_BUCKET="${HF_BUCKET_NAME}"
-fi
-
-HF_ENDPOINT="https://s3.hf.co"
-if [ -n "${HF_NAMESPACE}" ]; then
-  HF_ENDPOINT="https://s3.hf.co/${HF_NAMESPACE}"
-fi
-
+# ── 4. Write rclone config (HF S3 + crypt overlay) ─────────────────────────
 mkdir -p "${HOME}/.config/rclone"
 cat > "${HOME}/.config/rclone/rclone.conf" <<EOF
 [hf]
@@ -65,20 +52,20 @@ type = s3
 provider = Other
 access_key_id = ${HF_S3_ACCESS_KEY}
 secret_access_key = ${HF_S3_SECRET_KEY}
-endpoint = ${HF_ENDPOINT}
+endpoint = https://s3.hf.co
 region = us-east-1
 no_check_bucket = true
 
 [hf-crypt]
 type = crypt
-remote = hf:${HF_ONLY_BUCKET}/hermes-storage
+remote = hf:${HF_BUCKET_NAME}/hermes-storage
 filename_encryption = standard
 directory_name_encryption = true
 password = ${CRYPT_PASS_OBSCURED}
 password2 = ${CRYPT_SALT_OBSCURED}
 EOF
 chmod 600 "${HOME}/.config/rclone/rclone.conf"
-echo "rclone config written (HF S3 endpoint: ${HF_ENDPOINT}, bucket: ${HF_ONLY_BUCKET})"
+echo "rclone config written (HuggingFace S3 + crypt encryption)"
 
 # ── 5. Create mount point & mount encrypted bucket ──────────────────────────
 sudo mkdir -p "${MOUNT_POINT}"
