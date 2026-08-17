@@ -126,6 +126,19 @@ jobs:
             echo "PATH=$HOME/.hermes/bin:$HOME/.local/bin:$PATH"
           } >> "$GITHUB_ENV"
 
+      # pin 22.6 — hermes v0.20.0 ships python-telegram-bot 22.8, which makes
+      # the Telegram adapter fail with "Any cannot be instantiated" (issue #85272)
+      - name: Fix Telegram adapter (pin python-telegram-bot 22.6)
+        run: |
+          [ ! -f .guard-skip ] || exit 0
+          VENV_PY="$HOME/.hermes/hermes-agent/venv/bin/python"
+          if [ -x "$VENV_PY" ]; then
+            "$VENV_PY" -m pip install --disable-pip-version-check -q 'python-telegram-bot[webhooks]==22.6'
+            "$VENV_PY" -m pip show python-telegram-bot | grep -E '^(Name|Version):'
+          else
+            echo "venv python not found at $VENV_PY — skipping telegram pin"
+          fi
+
       - name: Verify install
         run: |
           [ ! -f .guard-skip ] || exit 0
