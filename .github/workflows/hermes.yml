@@ -132,9 +132,13 @@ jobs:
         run: |
           [ ! -f .guard-skip ] || exit 0
           VENV_PY="$HOME/.hermes/hermes-agent/venv/bin/python"
-          if [ -x "$VENV_PY" ]; then
+          UV="$HOME/.hermes/bin/uv"
+          if [ -x "$VENV_PY" ] && [ -x "$UV" ]; then
+            "$UV" pip install --python "$VENV_PY" 'python-telegram-bot[webhooks]==22.6'
+            "$VENV_PY" -c 'import telegram; print("python-telegram-bot", telegram.__version__)'
+          elif [ -x "$VENV_PY" ]; then
             "$VENV_PY" -m pip install --disable-pip-version-check -q 'python-telegram-bot[webhooks]==22.6'
-            "$VENV_PY" -m pip show python-telegram-bot | grep -E '^(Name|Version):'
+            "$VENV_PY" -c 'import telegram; print("python-telegram-bot", telegram.__version__)'
           else
             echo "venv python not found at $VENV_PY — skipping telegram pin"
           fi
