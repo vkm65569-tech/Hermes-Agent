@@ -228,7 +228,9 @@ jobs:
             hermes config set providers.agentrouter.base_url "$AR_BASE"
             hermes config set providers.agentrouter.key_env "AGENTROUTER_API_KEY"
             hermes config set providers.agentrouter.extra_headers "{\"User-Agent\": \"$AR_UA\"}"
-            hermes config set providers.agentrouter.context_length 131072
+            # No context_length override: hermes' built-in metadata already knows
+            # glm-5.3 (1,310,720 tokens); overriding it with a guess would only
+            # force earlier compaction.
             echo "provider -> custom:agentrouter (AgentRouter via proxy, UA $AR_UA)"
           elif [ -n "$HERMES_PROVIDER" ]; then
             hermes config set model.provider "$HERMES_PROVIDER"
