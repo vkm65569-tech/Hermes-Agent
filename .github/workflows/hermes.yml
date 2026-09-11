@@ -163,6 +163,7 @@ jobs:
           HF_TOKEN: ${{ secrets.HF_TOKEN }}
           DEEPINFRA_API_KEY: ${{ secrets.DEEPINFRA_API_KEY }}
           NVIDIA_API_KEY: ${{ secrets.NVIDIA_API_KEY }}
+          AGENTROUTER_API_KEY: ${{ secrets.AGENTROUTER_API_KEY }}
           EXA_API_KEY: ${{ secrets.EXA_API_KEY }}
           PARALLEL_API_KEY: ${{ secrets.PARALLEL_API_KEY }}
           FIRECRAWL_API_KEY: ${{ secrets.FIRECRAWL_API_KEY }}
@@ -191,7 +192,7 @@ jobs:
           for var in \
             OPENCODE_ZEN_API_KEY OPENROUTER_API_KEY ANTHROPIC_API_KEY GOOGLE_API_KEY GEMINI_API_KEY \
             NOUS_API_KEY FIREWORKS_API_KEY KIMI_API_KEY HF_TOKEN DEEPINFRA_API_KEY \
-            NVIDIA_API_KEY \
+            NVIDIA_API_KEY AGENTROUTER_API_KEY \
             EXA_API_KEY PARALLEL_API_KEY FIRECRAWL_API_KEY FAL_KEY HONCHO_API_KEY \
             TELEGRAM_BOT_TOKEN TELEGRAM_ALLOWED_USERS TELEGRAM_HOME_CHANNEL \
             TELEGRAM_CRON_THREAD_ID SLACK_BOT_TOKEN SLACK_APP_TOKEN SLACK_ALLOWED_USERS; do
@@ -212,7 +213,24 @@ jobs:
       - name: Apply config overrides
         run: |
           [ ! -f .guard-skip ] || exit 0
-          if [ -n "$HERMES_PROVIDER" ]; then
+          if [ "$HERMES_PROVIDER" = "agentrouter" ]; then
+            # AgentRouter via the Cloudflare proxy. Hermes' own client label
+            # (HermesAgent/<version>) is an AgentRouter-authorized IDE UA, so
+            # send the real identity instead of letting the proxy relabel it.
+            # The key is the proxy's PROXY_ACCESS_SECRET, which unlocks the
+            # two stored AgentRouter accounts with auto-failover.
+            HERMES_VER=$(hermes --version 2>/dev/null | grep -oE '[0-9]+\.[0-9]+\.[0-9]+' | head -1)
+            AR_UA="HermesAgent/${HERMES_VER:-0.20.0}"
+            AR_BASE="https://agentrouter-proxy.novamint.workers.dev/v1"
+            hermes config set model.provider "custom:agentrouter"
+            hermes config set model.base_url "$AR_BASE"
+            hermes config set providers.agentrouter.name "agentrouter"
+            hermes config set providers.agentrouter.base_url "$AR_BASE"
+            hermes config set providers.agentrouter.key_env "AGENTROUTER_API_KEY"
+            hermes config set providers.agentrouter.extra_headers "{\"User-Agent\": \"$AR_UA\"}"
+            hermes config set providers.agentrouter.context_length 131072
+            echo "provider -> custom:agentrouter (AgentRouter via proxy, UA $AR_UA)"
+          elif [ -n "$HERMES_PROVIDER" ]; then
             hermes config set model.provider "$HERMES_PROVIDER"
             echo "provider -> $HERMES_PROVIDER"
             case "$HERMES_PROVIDER" in
