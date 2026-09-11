@@ -47,21 +47,31 @@ ever has issues.
    | `TELEGRAM_ALLOWED_USERS` | Yes | Comma-separated Telegram user IDs allowed to talk to the bot |
    | `TELEGRAM_HOME_CHANNEL` | No | Chat ID for cron delivery and restart notifications |
    | `OPENCODE_ZEN_API_KEY` | Yes* | **LLM access via OpenCode Zen** — get your key at [opencode.ai/auth](https://opencode.ai/auth) |
+   | `AGENTROUTER_API_KEY` | Yes* | **LLM access via AgentRouter** — the Cloudflare proxy's access secret (not a raw AgentRouter key); unlocks the two accounts stored in the proxy with auto-failover |
    | `EXA_API_KEY` / `FIRECRAWL_API_KEY` | No | Web search/extract tools |
    | `FAL_KEY` | No | Image generation |
    | `GH_PAT` | No | Fallback token (scope: `repo` + `workflow`) if self-triggering hits 403 on your org |
 
-   *At least one LLM provider key is required. `OPENCODE_ZEN_API_KEY` is the recommended one.
-   Alternatives: `OPENROUTER_API_KEY`, `ANTHROPIC_API_KEY`, `GOOGLE_API_KEY`/`GEMINI_API_KEY`,
+   *At least one LLM provider key is required. `AGENTROUTER_API_KEY` is the current one
+   (free AgentRouter credits via the proxy). Alternatives: `OPENCODE_ZEN_API_KEY`,
+   `OPENROUTER_API_KEY`, `ANTHROPIC_API_KEY`, `GOOGLE_API_KEY`/`GEMINI_API_KEY`,
    `NOUS_API_KEY`, `FIREWORKS_API_KEY`, `KIMI_API_KEY`, `HF_TOKEN`, `DEEPINFRA_API_KEY`.
 
 4. **Add repo variables** (Settings → Secrets and variables → Actions → **Variables**)
-   to use OpenCode Zen's free model:
+   to select the LLM provider. Current setup — AgentRouter via the Cloudflare
+   proxy:
 
    | Variable | Value |
    |---|---| 
-   | `HERMES_PROVIDER` | `opencode-zen` |
-   | `HERMES_MODEL` | `deepseek-v4-flash-free` |
+   | `HERMES_PROVIDER` | `agentrouter` |
+   | `HERMES_MODEL` | `glm-5.3` |
+
+   The `agentrouter` provider routes through
+   `https://agentrouter-proxy.novamint.workers.dev/v1` and sends Hermes' real
+   client label (`HermesAgent/<version>` — an AgentRouter-authorized UA) via
+   per-provider `extra_headers`, so no relabeling happens. Other provider
+   values: `opencode-zen` (+ `deepseek-v4-flash-free`), `openrouter`,
+   `gemini`, `nvidia`.
 
 5. **Run the workflow:** Actions tab → *Hermes Agent 24/7* → **Run workflow**.
    First run installs Hermes, mounts R2, restores/migrates state, and starts
